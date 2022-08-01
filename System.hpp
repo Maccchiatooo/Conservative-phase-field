@@ -19,5 +19,6 @@ public:
     double sigma;
     double Re;
     double cs2, cs;
+    double Oh;
 };
 #endif

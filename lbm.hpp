@@ -129,11 +129,11 @@ struct LBM
     // local axis
     int x_lo = 0, x_hi = 0, y_lo = 0, y_hi = 0, z_lo = 0, z_hi = 0;
     double rho0,rho1, mu;
-    double sigma=0.0;
+    double sigma;
     double taum,tau0,tau1, r_x, r_y, r_z;
     double r1,u0;
     double cs2 = 1.0 / 3.0;
-    double delta = 2.0;
+    double delta = 4.0;
     double eps = 0.000001;
 
     // 6 faces
@@ -176,8 +176,8 @@ struct LBM
     Kokkos::View<double ***, Kokkos::CudaUVMSpace> divphix, divphiy, divphiz;
     Kokkos::View<double ***, Kokkos::CudaUVMSpace> div;
 
-    LBM(MPI_Comm comm_, int sx, int sy, int sz, double &tau0, double &tau1, double &taum, double &rho0, double &rho1, double &r_x, double &r_y, double &rz,double &u0)
-        : comm(comm_), glx(sx), gly(sy), glz(sz), tau0(tau0), tau1(tau1), taum(taum), rho0(rho0),rho1(rho1), r_x(r_x), r_y(r_y), r_z(r_z),u0(u0)
+    LBM(MPI_Comm comm_, int sx, int sy, int sz, double &tau0, double &tau1, double &taum, double &rho0, double &rho1, double &r_x, double &r_y, double &rz,double &sigma)
+        : comm(comm_), glx(sx), gly(sy), glz(sz), tau0(tau0), tau1(tau1), taum(taum), rho0(rho0),rho1(rho1), r_x(r_x), r_y(r_y), r_z(r_z),sigma(sigma)
     {
         // local length
         l_l[0] = (comm.px - glx % comm.rx >= 0) ? glx / comm.rx : glx / comm.rx + 1;

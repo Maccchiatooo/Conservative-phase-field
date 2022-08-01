@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
             s1.Monitor();
         }
         MPI_Barrier(MPI_COMM_WORLD);
-        LBM l1(MPI_COMM_WORLD, s1.sx, s1.sy, s1.sz, s1.tau0,s1.tau1,s1.taum,s1.rho0, s1.rho1,s1.r_x,s1.r_y,s1.r_z,s1.u0);
+        LBM l1(MPI_COMM_WORLD, s1.sx, s1.sy, s1.sz, s1.tau0,s1.tau1,s1.taum,s1.rho0, s1.rho1,s1.r_x,s1.r_y,s1.r_z,s1.sigma);
 
         l1.Initialize();
 

@@ -223,37 +223,55 @@ void LBM::Initialize()
     // macroscopic value initialization
     Kokkos::parallel_for(
         "initialize", mdrange_policy3({0, 0, 0}, {lx, ly, lz}), KOKKOS_CLASS_LAMBDA(const int i, const int j, const int k) {
-            ua(i, j, k) =  u0 * sin((double)((double)(i - ghost + x_lo) / (double) glx * 2.0 * pi)) * cos((double)((double)(j - ghost + y_lo) / (double) gly * 2.0 * pi))
-                              * cos((double)((double)(k - ghost + z_lo) / (double) glz * 2.0 * pi));
-            va(i, j, k) = -u0 * cos((double)((double)(i - ghost + x_lo) / (double) glx * 2.0 * pi)) * sin((double)((double)(j - ghost + y_lo) / (double) gly * 2.0 * pi)) 
-                              * cos((double)((double)(k - ghost + z_lo) / (double) glz * 2.0 * pi));
+            ua(i, j, k) = 0.0;
+            va(i, j, k) = 0.0;
             wa(i, j, k) = 0.0;
-            p(i, j, k)  = 0.0;
             pp(i, j, k) = 0.0;
 
-            double dist = 2.0 * (pow((pow((i - ghost + x_lo - 0.45 * glx), 2) + pow((j - ghost + y_lo - 0.45 * gly), 2) + pow((k - ghost + z_lo - 0.45 * glz), 2)), 0.5) - 0.2 * glx) / delta;
+            double dist = 2.0 * (pow((pow((i - ghost + x_lo - 0.5 * glx), 2) + pow((j - ghost + y_lo - 0.5 * gly), 2) + pow((k - ghost + z_lo - 0.3 * glz), 2)), 0.5) - 0.2 * glx) / delta;
+            double dist1 = 2.0 * (pow((pow((i - ghost + x_lo - 0.5 * glx), 2) + pow((j - ghost + y_lo - 0.5 * gly), 2) + pow((k - ghost + z_lo - 0.7 * glz), 2)), 0.5) - 0.2 * glx) / delta;
+            
+            if(k - ghost + z_lo>0.50*glz){
+                phi(i,j,k)=0.5 - 0.5 * tanh(dist1);
+            }else{
+                phi(i,j,k)=0.5 - 0.5 * tanh(dist);
+            }
 
-            phi(i, j, k) = 0.5 - 0.5 * tanh(dist);
+            rho(i, j, k) = rho0;
+            tau(i, j, k) = tau0 * phi(i, j, k);
 
-            rho(i, j, k) = rho0 * phi(i, j, k) + rho1 * (1.0 - phi(i, j, k));
-            tau(i, j, k) = tau0 * phi(i, j, k) + tau1 * (1.0 - phi(i, j, k));
-            nu(i, j, k) = tau(i, j, k) * cs2;
         });
 
     Kokkos::fence();
-    pass(phi);
-    pass(p);
-    pass(pp);
-    pass(ua);
-    pass(va);
-    pass(wa);
+Kokkos::parallel_for(
+        "update", team_policy(lz - 2 * ghost, Kokkos::AUTO), KOKKOS_CLASS_LAMBDA(const member_type &team_member) {
+            const int k = team_member.league_rank() + ghost;
 
-    dphi = d_c(phi);
-    dp = d_c(p);
-    dpp = d_c(pp);
-    du = d_c(ua);
-    dv = d_c(va);
-    dw = d_c(wa);
+            Kokkos::parallel_for(
+                Kokkos::TeamThreadRange(team_member, (lx - 2 * ghost) * (ly - 2 * ghost)), [&](const int &ij)
+                {
+                    const int i = ij % (lx - 2 * ghost) + ghost;
+                    const int j = ij / (lx - 2 * ghost) + ghost;
+                    dphi(0, i, j, k) = 0.0;
+                    dphi(1, i, j, k) = 0.0;
+                    dphi(2, i, j, k) = 0.0;
+
+                    Kokkos::parallel_reduce(
+                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &dphi0)
+                        { dphi0 += g(ii, i, j, k)*(e(ii,0)-ua(i,j,k)) ; },
+                        dphi(0,i, j, k));
+
+                    Kokkos::parallel_reduce(
+                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &dphi1)
+                        { dphi1 += g(ii, i, j, k)*(e(ii,1)-va(i,j,k)) ; },
+                        dphi(1,i, j, k));
+
+                    Kokkos::parallel_reduce(
+                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &dphi2)
+                        { dphi2 += g(ii, i, j, k)*(e(ii,2)-wa(i,j,k)) ; },
+                        dphi(2,i, j, k) });
+        });
+    Kokkos::fence();
 
     Kokkos::parallel_for(
         "initialize", mdrange_policy3({l_s[0], l_s[1], l_s[2]}, {l_e[0], l_e[1], l_e[2]}), KOKKOS_CLASS_LAMBDA(const int i, const int j, const int k) {
@@ -263,57 +281,23 @@ void LBM::Initialize()
             divphiy(i, j, k) = dphi(1, i, j, k) / sqd;
             divphiz(i, j, k) = dphi(2, i, j, k) / sqd;
 
-            drho(0,i, j, k) = dphi(0, i, j, k) * rho0 + (1.0 - dphi(0, i, j, k)) * rho1;
-            drho(1,i, j, k) = dphi(1, i, j, k) * rho0 + (1.0 - dphi(1, i, j, k)) * rho1;
-            drho(2,i, j, k) = dphi(2, i, j, k) * rho0 + (1.0 - dphi(2, i, j, k)) * rho1;
         });
 
-    pass(divphix);
-    pass(divphiy);
-    pass(divphiz);
-    div = div_c(divphix,divphiy,divphiz);
 
     // distribution function initialization
     Kokkos::parallel_for(
         "initf", mdrange_policy4({0, 0, 0, 0}, {q, lx, ly, lz}), KOKKOS_CLASS_LAMBDA(const int ii, const int i, const int j, const int k) {
 
-            double sqd = sqrt(pow(dphi(0, i, j, k), 2) + pow(dphi(1, i, j, k), 2) + pow(dphi(2, i, j, k), 2)) + eps;
-
             double gamma = t(ii) * (1.0 + 3.0 * (e(ii, 0) * ua(i, j, k) + e(ii, 1) * va(i, j, k) + e(ii, 2) * wa(i, j, k)) +
                                           4.5 * (pow((e(ii, 0) * ua(i, j, k) + e(ii, 1) * va(i, j, k) + e(ii, 2) * wa(i, j, k)), 2)) -
                                           1.5 * (pow(ua(i, j, k), 2) + pow(va(i, j, k), 2) + pow(wa(i, j, k), 2)));
 
-            double forsx = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(0, i, j, k);
-            double forsy = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(1, i, j, k);
-            double forsz = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(2, i, j, k);
-
-            double forspx = -dp(0, i, j, k);
-            double forspy = -dp(1, i, j, k);
-            double forspz = -dp(2, i, j, k);
-
-            double forsppx = dpp(0, i, j, k);
-            double forsppy = dpp(1, i, j, k);
-            double forsppz = dpp(2, i, j, k);
-
-            double forsnx = nu(i, j, k) * (2.0 * du(0, i, j, k) * drho(0, i, j, k) + (du(1, i,j, k) + dv(0, i, j, k)) * drho(1, i, j, k) + (du(2, i, j, k) + dw(0, i, j, k)) * drho(2, i, j, k));
-            double forsny = nu(i, j, k) * (2.0 * dv(1, i, j, k) * drho(1, i, j, k) + (du(1, i,j, k) + dv(0, i, j, k)) * drho(0, i, j, k) + (dv(2, i, j, k) + dw(1, i, j, k)) * drho(2, i, j, k));
-            double forsnz = nu(i, j, k) * (2.0 * dw(2, i, j, k) * drho(2, i, j, k) + (du(2, i,j, k) + dw(0, i, j, k)) * drho(0, i, j, k) + (dw(1, i, j, k) + dv(2, i, j, k)) * drho(1, i, j, k));
-
-            double fors = (e(ii, 0) - ua(i, j, k)) * gamma / rho(i, j, k) *
-                              (forspx + forsnx + forsx) +
-                          (e(ii, 1) - va(i, j, k)) * gamma / rho(i, j, k) *
-                              (forspy + forsny + forsy) +
-                          (e(ii, 2) - wa(i, j, k)) * gamma / rho(i, j, k) *
-                              (forspz + forsnz + forsz) +
-                          (e(ii, 0) - ua(i, j, k)) * t(ii) * forsppx +
-                          (e(ii, 1) - va(i, j, k)) * t(ii) * forsppy +
-                          (e(ii, 2) - wa(i, j, k)) * t(ii) * forsppz;
 
             double forphi = gamma * ((e(ii, 0) - ua(i, j, k)) * 4.0 * phi(i, j, k) * (1.0 - phi(i, j, k)) / delta * divphix(i, j, k) +
                                      (e(ii, 1) - va(i, j, k)) * 4.0 * phi(i, j, k) * (1.0 - phi(i, j, k)) / delta * divphiy(i, j, k) +
                                      (e(ii, 2) - wa(i, j, k)) * 4.0 * phi(i, j, k) * (1.0 - phi(i, j, k)) / delta * divphiz(i, j, k));
 
-            f(ii, i, j, k) = t(ii) * pp(i, j, k) + (gamma - t(ii)) * cs2 - 0.50 * fors;
+            f(ii, i, j, k) = t(ii) * pp(i, j, k) + (gamma - t(ii)) * cs2 ;
             g(ii, i, j, k) = gamma * phi(i, j, k) - 0.50 * forphi;
         });
 
@@ -326,52 +310,20 @@ void LBM::Collision()
     Kokkos::parallel_for(
         "collision", mdrange_policy4({0, l_s[0], l_s[1], l_s[2]}, {q, l_e[0], l_e[1], l_e[2]}), KOKKOS_CLASS_LAMBDA(const int ii, const int i, const int j, const int k) {
 
-            double sqd = sqrt(pow(dphi(0, i, j, k), 2) + pow(dphi(1, i, j, k), 2) + pow(dphi(2, i, j, k), 2)) + eps;
-
             double gamma = t(ii) * (1.0 + 3.0 * (e(ii, 0) * ua(i, j, k) + e(ii, 1) * va(i, j, k) + e(ii, 2) * wa(i, j, k)) +
                                           4.5 * (pow((e(ii, 0) * ua(i, j, k) + e(ii, 1) * va(i, j, k) + e(ii, 2) * wa(i, j, k)), 2)) -
                                           1.5 * (pow(ua(i, j, k), 2) + pow(va(i, j, k), 2) + pow(wa(i, j, k), 2)));
 
-            double forsx = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(0, i, j, k);
-            double forsy = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(1, i, j, k);
-            double forsz = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(2, i, j, k);
-
-            double forspx = -dp(0, i, j, k);
-            double forspy = -dp(1, i, j, k);
-            double forspz = -dp(2, i, j, k);
-
-            double forsppx = dpp(0, i, j, k);
-            double forsppy = dpp(1, i, j, k);
-            double forsppz = dpp(2, i, j, k);
-
-            double forsnx = nu(i, j, k) * (2.0 * du(0, i, j, k) * drho(0, i, j, k) 
-                                               + (du(1, i,j, k) + dv(0, i, j, k)) * drho(1, i, j, k) 
-                                               + (du(2, i, j, k) + dw(0, i, j, k)) * drho(2, i, j, k));
-
-            double forsny = nu(i, j, k) * (2.0 * dv(1, i, j, k) * drho(1, i, j, k) 
-                                               + (du(1, i,j, k)+ dv(0, i, j, k)) * drho(0, i, j, k) 
-                                               + (dv(2, i, j, k) + dw(1, i, j, k)) * drho(2, i, j, k));
-
-            double forsnz = nu(i, j, k) * (2.0 * dw(2, i, j, k) * drho(2, i, j, k) 
-                                               + (du(2, i,j, k) + dw(0, i, j, k)) * drho(0, i, j, k) 
-                                               + (dw(1, i, j, k) + dv(2, i, j, k)) * drho(1, i, j, k));
-
-            double fors = (e(ii, 0) - ua(i, j, k)) * gamma / rho(i, j, k) * (forspx + forsnx + forsx) +
-                          (e(ii, 1) - va(i, j, k)) * gamma / rho(i, j, k) * (forspy + forsny + forsy) +
-                          (e(ii, 2) - wa(i, j, k)) * gamma / rho(i, j, k) * (forspz + forsnz + forsz) +
-                          (e(ii, 0) - ua(i, j, k)) * t(ii) * forsppx +
-                          (e(ii, 1) - va(i, j, k)) * t(ii) * forsppy +
-                          (e(ii, 2) - wa(i, j, k)) * t(ii) * forsppz;
 
             double forphi = gamma * ((e(ii, 0) - ua(i, j, k)) * 4.0 * phi(i, j, k) * (1.0 - phi(i, j, k)) / delta * divphix(i, j, k) +
                                      (e(ii, 1) - va(i, j, k)) * 4.0 * phi(i, j, k) * (1.0 - phi(i, j, k)) / delta * divphiy(i, j, k) +
                                      (e(ii, 2) - wa(i, j, k)) * 4.0 * phi(i, j, k) * (1.0 - phi(i, j, k)) / delta * divphiz(i, j, k));
 
-            double feq = t(ii) * pp(i, j, k) + (gamma - t(ii)) * cs2 - 0.50 * fors;
+            double feq = t(ii) * pp(i, j, k) + (gamma - t(ii)) * cs2;
 
             double geq = gamma * phi(i, j, k)  - 0.50 * forphi;
 
-            f(ii, i, j, k) = f(ii, i, j, k) - (f(ii, i, j, k) - feq) / (tau(i, j, k) + 0.5) + fors;
+            f(ii, i, j, k) = f(ii, i, j, k) - (f(ii, i, j, k) - feq) / (tau(i, j, k) + 0.5)
             g(ii, i, j, k) = g(ii, i, j, k) - (g(ii, i, j, k) - geq) / (taum + 0.5) + forphi;
         });
     Kokkos::fence();
@@ -405,8 +357,8 @@ void LBM::Update()
     typedef Kokkos::TeamPolicy<> team_policy;
     typedef Kokkos::TeamPolicy<>::member_type member_type;
     Kokkos::parallel_for(
-        "update", team_policy(lz-2*ghost, Kokkos::AUTO), KOKKOS_CLASS_LAMBDA(const member_type &team_member) {
-            const int k = team_member.league_rank()+ghost;
+        "update", team_policy(lz - 2 * ghost, Kokkos::AUTO), KOKKOS_CLASS_LAMBDA(const member_type &team_member) {
+            const int k = team_member.league_rank() + ghost;
 
             Kokkos::parallel_for(
                 Kokkos::TeamThreadRange(team_member, (lx - 2 * ghost) * (ly - 2 * ghost)), [&](const int &ij)
@@ -414,173 +366,76 @@ void LBM::Update()
                     const int i = ij % (lx - 2 * ghost) + ghost;
                     const int j = ij / (lx - 2 * ghost) + ghost;
                     phi(i, j, k) = 0.0;
-
-                    Kokkos::parallel_reduce(
-                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &phim)
-                        { phim += g(ii, i, j, k) ; },
-                        phi(i, j, k)); });
-        });
-
-    Kokkos::parallel_for(
-        "initialize", mdrange_policy3({ghost, ghost, ghost}, {lx-ghost, ly-ghost, lz-ghost}), KOKKOS_CLASS_LAMBDA(const int i, const int j, const int k) {
-
-            rho(i, j, k) = rho0 * phi(i, j, k) + rho1 * (1.0 - phi(i, j, k));
-            tau(i, j, k) = tau0 * phi(i, j, k) + tau1 * (1.0 - phi(i, j, k));
-            nu(i, j, k) = tau(i, j, k) * cs2;
-        });
-
-
-
-
-    Kokkos::parallel_for(
-        "update", team_policy(lz-2*ghost, Kokkos::AUTO), KOKKOS_CLASS_LAMBDA(const member_type &team_member) {
-            const int k = team_member.league_rank()+ghost;
-
-            Kokkos::parallel_for(
-                Kokkos::TeamThreadRange(team_member, (lx - 2 * ghost) * (ly - 2 * ghost)), [&](const int &ij)
-                {
-                    const int i = ij % (lx - 2 * ghost) + ghost;
-                    const int j = ij / (lx - 2 * ghost) + ghost;
-
                     pp(i, j, k) = 0.0;
-
-                    Kokkos::parallel_reduce(
-                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &ppm)
-                        { ppm += f(ii, i, j, k) ; },
-                        pp(i, j, k));
-
-
-                    pp(i, j, k) = pp(i, j, k) - (ua(i, j, k)  * dpp(0, i, j, k) 
-                                              +  va(i, j, k)  * dpp(1, i, j, k) 
-                                              +  wa(i, j, k)  * dpp(2, i, j, k))/2.0;
-                    p(i,j,k)  = pp(i,j,k)*rho(i,j,k); });
-        });
-
-    pass(phi);
-    pass(p);
-    pass(pp);
-    pass(ua);
-    pass(va);
-    pass(wa);
-
-    dphi = d_c(phi);
-    dp = d_c(p);
-    dpp = d_c(pp);
-    du = d_c(ua);
-    dv = d_c(va);
-    dw = d_c(wa);
-
-    Kokkos::parallel_for(
-        "initialize", mdrange_policy3({l_s[0], l_s[1], l_s[2]}, {l_e[0], l_e[1], l_e[2]}), KOKKOS_CLASS_LAMBDA(const int i, const int j, const int k) {
-            double sqd = pow(pow(dphi(0, i, j, k), 2) + pow(dphi(1, i, j, k), 2) + pow(dphi(2, i, j, k), 2), 0.5) + eps;
-
-            divphix(i, j, k) = dphi(0, i, j, k) / sqd;
-            divphiy(i, j, k) = dphi(1, i, j, k) / sqd;
-            divphiz(i, j, k) = dphi(2, i, j, k) / sqd;
-
-            drho(0,i, j, k) = dphi(0, i, j, k) * rho0 + (1.0 - dphi(0, i, j, k)) * rho1;
-            drho(1,i, j, k) = dphi(1, i, j, k) * rho0 + (1.0 - dphi(1, i, j, k)) * rho1;
-            drho(2,i, j, k) = dphi(2, i, j, k) * rho0 + (1.0 - dphi(2, i, j, k)) * rho1;
-        });
-    
-    Kokkos::fence();
-    pass(divphix);
-    pass(divphiy);
-    pass(divphiz);
-    div = div_c(divphix,divphiy,divphiz);
-
-    Kokkos::parallel_for(
-        "update", team_policy(lz - 2 * ghost, Kokkos::AUTO), KOKKOS_CLASS_LAMBDA(const member_type &team_member) {
-            const int k = team_member.league_rank()+ghost;
-
-            Kokkos::parallel_for(
-                Kokkos::TeamThreadRange(team_member, (lx - 2 * ghost) * (ly - 2 * ghost)), [&](const int &ij)
-                {
-                    const int i = ij % (lx - 2 * ghost) + ghost;
-                    const int j = ij / (lx - 2 * ghost) + ghost;
-
                     ua(i, j, k) = 0.0;
                     va(i, j, k) = 0.0;
                     wa(i, j, k) = 0.0;
 
                     Kokkos::parallel_reduce(
+                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &phim)
+                        { phim += g(ii, i, j, k) ; },
+                        phi(i, j, k));
+
+                    Kokkos::parallel_reduce(
+                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &ppm)
+                        { ppm += f(ii, i, j, k); },
+                        pp(i, j, k));
+
+                    Kokkos::parallel_reduce(
                         Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &um)
-                        { um += f(ii, i, j, k) * e(ii, 0); },
+                        { um += f(ii, i, j, k) * e(ii, 0)/cs2; },
                         ua(i, j, k));
 
                     Kokkos::parallel_reduce(
                         Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &vm)
-                        { vm += f(ii, i, j, k) * e(ii, 1); },
+                        { vm += f(ii, i, j, k) * e(ii, 1)/cs2; },
                         va(i, j, k));
 
                     Kokkos::parallel_reduce(
                         Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &wm)
-                        { wm += f(ii, i, j, k) * e(ii, 2); },
+                        { wm += f(ii, i, j, k) * e(ii, 2)/cs2; },
                         wa(i, j, k)); });
         });
     Kokkos::fence();
 
+Kokkos::parallel_for(
+        "update", team_policy(lz - 2 * ghost, Kokkos::AUTO), KOKKOS_CLASS_LAMBDA(const member_type &team_member) {
+            const int k = team_member.league_rank() + ghost;
 
+            Kokkos::parallel_for(
+                Kokkos::TeamThreadRange(team_member, (lx - 2 * ghost) * (ly - 2 * ghost)), [&](const int &ij)
+                {
+                    const int i = ij % (lx - 2 * ghost) + ghost;
+                    const int j = ij / (lx - 2 * ghost) + ghost;
+                    dphi(0, i, j, k) = 0.0;
+                    dphi(1, i, j, k) = 0.0;
+                    dphi(2, i, j, k) = 0.0;
 
-    Kokkos::parallel_for(
+                    Kokkos::parallel_reduce(
+                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &dphi0)
+                        { dphi0 += g(ii, i, j, k)*(e(ii,0)-ua(i,j,k)) ; },
+                        dphi(0,i, j, k));
+
+                    Kokkos::parallel_reduce(
+                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &dphi1)
+                        { dphi1 += g(ii, i, j, k)*(e(ii,1)-va(i,j,k)) ; },
+                        dphi(1,i, j, k));
+
+                    Kokkos::parallel_reduce(
+                        Kokkos::ThreadVectorRange(team_member, q), [&](const int &ii, double &dphi2)
+                        { dphi2 += g(ii, i, j, k)*(e(ii,2)-wa(i,j,k)) ; },
+                        dphi(2,i, j, k) });
+        });
+    Kokkos::fence();
+        Kokkos::parallel_for(
         "initialize", mdrange_policy3({l_s[0], l_s[1], l_s[2]}, {l_e[0], l_e[1], l_e[2]}), KOKKOS_CLASS_LAMBDA(const int i, const int j, const int k) {
             double sqd = pow(pow(dphi(0, i, j, k), 2) + pow(dphi(1, i, j, k), 2) + pow(dphi(2, i, j, k), 2), 0.5) + eps;
 
-            double forsx = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(0, i, j, k);
-            double forsy = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(1, i, j, k);
-            double forsz = -3.0 / 2.0 * sigma * delta * div(i, j, k) * sqd * dphi(2, i, j, k);
-
-            double forspx = -dp(0, i, j, k);
-            double forspy = -dp(1, i, j, k);
-            double forspz = -dp(2, i, j, k);
-
-            double forsppx = dpp(0, i, j, k) * rho(i, j, k);
-            double forsppy = dpp(1, i, j, k) * rho(i, j, k);
-            double forsppz = dpp(2, i, j, k) * rho(i, j, k);
-
-            double forsnx = nu(i, j, k) * (2.0 * du(0, i, j, k) * drho(0, i, j, k) + 
-                                                (du(1, i, j, k) + dv(0, i, j, k)) * drho(1, i, j, k) + 
-                                                (du(2, i, j, k) + dw(0, i, j, k)) * drho(2, i, j, k));
-            double forsny = nu(i, j, k) * (2.0 * dv(1, i, j, k) * drho(1, i, j, k) + 
-                                                (du(1, i, j, k) + dv(0, i, j, k)) * drho(0, i, j, k) + 
-                                                (dv(2, i, j, k) + dw(1, i, j, k)) * drho(2, i, j, k));
-            double forsnz = nu(i, j, k) * (2.0 * dw(2, i, j, k) * drho(2, i, j, k) + 
-                                                (du(2, i, j, k) + dw(0, i, j, k)) * drho(0, i, j, k) + 
-                                                (dw(1, i, j, k) + dv(2, i, j, k)) * drho(1, i, j, k));
-
-            ua(i, j, k) = ua(i, j, k) / cs2 + (forspx + forsppx + forsnx + forsx) / 2.0 / rho(i, j, k);
-            va(i, j, k) = va(i, j, k) / cs2 + (forspy + forsppy + forsny + forsy) / 2.0 / rho(i, j, k);
-            wa(i, j, k) = wa(i, j, k) / cs2 + (forspz + forsppz + forsnz + forsz) / 2.0 / rho(i, j, k);
+            divphix(i, j, k) = -dphi(0, i, j, k) / sqd;
+            divphiy(i, j, k) = -dphi(1, i, j, k) / sqd;
+            divphiz(i, j, k) = -dphi(2, i, j, k) / sqd;
         });
-
-    Kokkos::fence();
-    double energytot = 0.0;
-    double energy = 0.0;
-    MPI_Barrier(MPI_COMM_WORLD);
-  /*
-    for (int i = ghost; i < l_e[0]; i++)
-    {
-        for (int j = ghost; j < l_e[1]; j++)
-        {
-            for (int k = ghost; k < l_e[2]; k++)
-            {
-
-                energy += (pow(ua(i, j, k), 2) + pow(va(i, j, k), 2) + pow(wa(i, j, k), 2)) / 2.0;
-            }
-        }
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Reduce(&energy, &energytot, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Barrier(MPI_COMM_WORLD);
-
-        if (comm.me == 0)
-        {
-                ofstream outfile;
-                outfile.open("test.dat", ios::out | ios::app);
-                outfile << std::fixed << std::setprecision(16) << energytot << endl;
-                outfile.close();
-        }
-*/
+    
     Kokkos::fence();
 };
 
@@ -936,38 +791,6 @@ void LBM::MPIoutput(int n)
         free(phio);
 
         MPI_Barrier(MPI_COMM_WORLD);
-};
-
-void LBM::Output(int n)
-{
-    std::ofstream outfile;
-    std::string str = "output" + std::to_string(n) + std::to_string(comm.me);
-    outfile << std::setiosflags(std::ios::fixed);
-    outfile.open(str + ".dat", std::ios::out);
-
-    outfile << "variables=x,y,z,f" << std::endl;
-    outfile << "zone I=" << lx - 6 << ",J=" << ly - 6 << ",K=" << lz - 6 << std::endl;
-
-    for (int k = 3; k < lz - 3; k++)
-    {
-        for (int j = 3; j < ly - 3; j++)
-        {
-            for (int i = 3; i < lx - 3; i++)
-            {
-
-                outfile << std::setprecision(8) << setiosflags(std::ios::left) << x_lo + i - 3 << " " << y_lo + j - 3 << " " << z_lo + k - 3 << " " << f(0, i, j, k) << std::endl;
-            }
-        }
-    }
-
-    outfile.close();
-    if (comm.me == 0)
-    {
-        printf("\n");
-        printf("The result %d is writen\n", n);
-        printf("\n");
-        printf("============================\n");
-    }
 };
 
 Kokkos::View<double****,Kokkos::CudaUVMSpace> LBM::d_c(Kokkos::View<double***,Kokkos::CudaUVMSpace> c)
