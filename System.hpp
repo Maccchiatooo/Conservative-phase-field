@@ -9,15 +9,27 @@ class System
 
 public:
     System();
+
     void Monitor();
 
-    int sx, sy, sz;
-    int Time, inter;
-    double miu, u0, R, rho0,rho1, Ma, tau0,tau1;
-    double r_x, r_y, r_z;
-    double taum;
-    double sigma;
-    double Re;
+    //  domain size
+    int sx, sy;
+    // speed of sound
     double cs2, cs;
+    // beta,surface tension, interface thickness
+    double beta, kappa, sigma;
+    // circle radius
+    double R;
+    // density0,density1
+    double rho0, rho1;
+    double tau0, tau1, taum;
+    double Oh;
+
+    // total time
+    int Time;
+    // time interval
+    int inter;
+    // relaxation time connect to macro to micro
+    double tau;
 };
 #endif
