@@ -34,7 +34,7 @@ int main(int argc, char *argv[])
             end = MPI_Wtime();
             if (it % s1.inter == 0)
             {
-                l1.MPIoutput(it / s1.inter);
+              //  l1.MPIoutput(it / s1.inter);
                 if (l1.comm.me == 0)
                     printf("time=%f\n", end - start);
             }

@@ -1,4 +1,4 @@
-KOKKOS_PATH = ${HOME}/Kokkos/kokkos
+KOKKOS_PATH = /grand/IMEXLBM/czhao/Kokkos/kokkos
 KOKKOS_DEVICES = Cuda,OpenMP
 EXE_NAME = "LBM"
 
@@ -31,7 +31,7 @@ $(EXE): $(OBJ) $(KOKKOS_LINK_DEPENDS)
 	$(LINK) $(KOKKOS_LDFLAGS) $(LINKFLAGS) $(EXTRA_PATH) $(OBJ) $(KOKKOS_LIBS) $(LIB) -o $(EXE)
 
 clean: kokkos-clean
-	rm -f *.o *.cuda *.host *.dat *.exe
+	rm -f *.o *.cuda *.host *.dat *.exe *.plt
 
 # Compilation rules
 

@@ -18,6 +18,9 @@ System::System()
     this->cs = sqrt(cs2);
     this->Ma = this->u0 / this->cs;
     this->tau0=this->u0*this->sx/Re/cs2;
+    this->tau1=this->tau0;
+    this->Time=100;//10*this->sx/this->u0/2/3.1415926;
+    this->inter=100;//this->Time/10;
 }
 
 
