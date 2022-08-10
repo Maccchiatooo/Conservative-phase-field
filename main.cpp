@@ -1,7 +1,4 @@
-#include "mpi.h"
 #include "lbm.hpp"
-#include "System.hpp"
-#include <Kokkos_Core.hpp>
 
 int main(int argc, char *argv[])
 {
@@ -15,16 +12,16 @@ int main(int argc, char *argv[])
 
         System s1;
         if (rank == 0)
-        {
             s1.Monitor();
-        }
-        MPI_Barrier(MPI_COMM_WORLD);
-        LBM l1(MPI_COMM_WORLD, s1.sx, s1.sy, s1.sz, s1.tau0,s1.tau1,s1.taum,s1.rho0, s1.rho1,s1.r_x,s1.r_y,s1.r_z,s1.u0);
+
+        LBM l1(MPI_COMM_WORLD, s1.sx, s1.sy, s1.sz,
+                                s1.tau0, s1.tau1, s1.taum,
+                                s1.rho0, s1.rho1,
+                                s1.r_x, s1.r_y, s1.r_z,
+                                s1.u0);
 
         l1.Initialize();
-
         l1.MPIoutput(0);
-        l1.setup_subdomain();
         start = MPI_Wtime();
         for (int it = 1; it <= s1.Time; it++)
         {
@@ -34,7 +31,7 @@ int main(int argc, char *argv[])
             end = MPI_Wtime();
             if (it % s1.inter == 0)
             {
-                l1.MPIoutput(it / s1.inter);
+              //  l1.MPIoutput(it / s1.inter);
                 if (l1.comm.me == 0)
                     printf("time=%f\n", end - start);
             }

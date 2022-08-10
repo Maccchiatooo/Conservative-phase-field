@@ -12,42 +12,45 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <mpi.h>
 #include <Kokkos_Core.hpp>
 #include <Kokkos_Random.hpp>
 #include <Kokkos_Timer.hpp>
-#include <mpi.h>
 
 #define q 27
 #define dim 3
 #define ghost 3
+#define eps 1e-6
+#define pi 3.1415926
 
+typedef Kokkos::TeamPolicy<> team_policy;
+typedef Kokkos::TeamPolicy<>::member_type member_type;
 typedef Kokkos::RangePolicy<> range_policy;
 typedef Kokkos::MDRangePolicy<Kokkos::Rank<2>> mdrange_policy2;
 typedef Kokkos::MDRangePolicy<Kokkos::Rank<3>> mdrange_policy3;
 typedef Kokkos::MDRangePolicy<Kokkos::Rank<4>> mdrange_policy4;
 
-using buffer_ft = Kokkos::View<double ****, Kokkos::LayoutLeft, Kokkos::HostSpace>;
-using buffer_t = Kokkos::View<double ***, Kokkos::LayoutLeft, Kokkos::HostSpace>;
-using buffer_ut = Kokkos::View<double **, Kokkos::LayoutLeft, Kokkos::HostSpace>;
-using buffer_st = Kokkos::View<double *, Kokkos::LayoutLeft, Kokkos::HostSpace>;
+using buffer_f = Kokkos::View<double ****,  Kokkos::CudaSpace>;
+using buffer_u = Kokkos::View<double ***, Kokkos::CudaSpace>;
+using buffer_div = Kokkos::View<double ***, Kokkos::CudaSpace>;
+using buffer_pack_f = Kokkos::View<double ****, Kokkos::CudaHostPinnedSpace>;
+using buffer_pack_u = Kokkos::View<double ***, Kokkos::CudaHostPinnedSpace>;
+
+
 
 struct CommHelper
 {
 
     MPI_Comm comm;
     // rank number for each dim
-    int rx, ry, rz;
+    int rx,ry,rz;
     // rank
     int me;
     // axis for each rank
-    int px, py, pz;
+    int px,py,pz;
     int nranks;
     // 6 faces
-    int up, down, left, right, front, back;
-    // 12 edges
-    int frontup, frontdown, frontleft, frontright, backup, backdown, backleft, backright, leftup, leftdown, rightup, rightdown;
-    // 8 points
-    int frontleftup, frontleftdown, frontrightup, frontrightdown, backleftup, backrightup, backleftdown, backrightdown;
+    int face_recv[2],face_send[2];
 
     CommHelper(MPI_Comm comm_)
     {
@@ -56,58 +59,24 @@ struct CommHelper
         MPI_Comm_size(comm, &nranks);
         MPI_Comm_rank(comm, &me);
 
-        rx = std::pow(1.0 * nranks, 1.0 / 3.0);
-        while (nranks % rx != 0)
-            rx++;
-
-        rz = std::sqrt(1.0 * (nranks / rx));
-        while ((nranks / rx) % rz != 0)
-            rz++;
-
-        ry = nranks / rx / rz;
+        rx = nranks;
+        ry = 1;
+        rz = 1;
 
         px = me % rx;
-        pz = (me / rx) % rz;
-        py = (me / rx / rz);
-
-        // 6 faces
-        left  = px == 0      ? me+rx-1         : me - 1;
-        right = px == rx - 1 ? me-rx+1         : me + 1;
-
-        down  = pz == 0      ? me+rx*(rz-1)    : me - rx;
-        up    = pz == rz - 1 ? me-rx*(rz-1)    : me + rx;
-
-        front = py == 0      ? me+rx*rz*(ry-1) : me - rx * rz;
-        back  = py == ry - 1 ? me-rx*rz*(ry-1) : me + rx * rz;
-
-        // 12 edges
-        leftup    = (pz == rz - 1) ? left-rx*(rz-1)  : left + rx;
-        rightup   = (pz == rz - 1) ? right-rx*(rz-1) : right + rx;
-        leftdown  = (pz == 0)      ? left+rx*(rz-1)  : left - rx;
-        rightdown = (pz == 0)      ? right+rx*(rz-1) : right - rx;
-
-        frontup    = (pz == rz - 1) ? front-rx*(rz-1)  : front + rx;
-        frontright = (px == rx - 1) ? front -rx+1      : front + 1;
-        frontdown  = (pz == 0)      ? front +rx*(rz-1) : front - rx;
-        frontleft  = (px == 0)      ? front +rx-1      : front - 1;
+        py = 0;
+        pz = 0;
 
 
-        backup    = (pz == rz - 1) ? back -rx*(rz-1) : back + rx;
-        backright = (px == rx - 1) ? back -rx+1      : back + 1;
-        backdown  = (pz == 0)      ? back +rx*(rz-1) : back - rx;
-        backleft  = (px == 0)      ? back +rx-1      : back - 1;
+        face_send[0] = px == 0 ? me + rx - 1 : me - 1;
 
-        // 8 points
+        face_send[1] = px == rx - 1 ? me - rx + 1 : me + 1;
 
-        backrightdown  = (px == rx - 1 )  ? backdown-rx+1 : backdown + 1;
-        frontrightdown = (px == rx - 1 )  ? frontdown-rx+1 : frontdown + 1;
-        frontrightup   = (px == rx - 1 )  ? frontup-rx+1   : frontup + 1;
-        backrightup    = (px == rx - 1 )  ? backup-rx+1    : backup + 1;
-        frontleftup    = (px == 0 )       ? frontup+rx-1   : frontup - 1;
-        backleftdown   = (px == 0 )       ? backdown+rx-1  : backdown - 1;
-        frontleftdown  = (px == 0 )       ? frontdown+rx-1 : frontdown - 1;
-        backleftup     = (px == 0 )       ? backup+rx-1    : backup - 1;
+        face_recv[0] = face_send[1];
+ 
+        face_recv[1] = face_send[0];
 
+    
         MPI_Barrier(MPI_COMM_WORLD);
     }
 };
@@ -116,9 +85,14 @@ struct LBM
 {
 
     CommHelper comm;
-    MPI_Request mpi_requests_recv[26];
-    MPI_Request mpi_requests_send[26];
-    int mpi_active_requests;
+    MPI_Request mpi_requests_recv[2];
+    MPI_Request mpi_requests_send[2];
+
+    MPI_Datatype f_face_recv[2];
+    MPI_Datatype f_face_send[2];
+
+    MPI_Datatype u_face_recv[2];
+    MPI_Datatype u_face_send[2];
 
     int glx, gly, glz;
     // include ghost nodes
@@ -128,61 +102,37 @@ struct LBM
 
     // local axis
     int x_lo = 0, x_hi = 0, y_lo = 0, y_hi = 0, z_lo = 0, z_hi = 0;
-    double rho0,rho1, mu;
-    double sigma=0.0;
-    double taum,tau0,tau1, r_x, r_y, r_z;
-    double r1,u0;
+    double rho0, rho1, mu;
+    double sigma;
+    double taum, tau0, tau1, r_x, r_y, r_z;
+    double r1, u0;
     double cs2 = 1.0 / 3.0;
-    double delta = 2.0;
-    double eps = 0.000001;
+    double delta = 4.0;
 
-    // 6 faces
+    buffer_pack_f f_in[2], f_out[2];
+    buffer_pack_f f_in0,f_in1,f_out0,f_out1;
+    buffer_pack_u u_in[2], u_out[2];
+    buffer_f f, ft, fb, g, gt, gb;
+    buffer_f dphi, drho, dp, dpp, du, dv, dw;
 
-    buffer_ft m_left, m_right, m_down, m_up, m_front, m_back;
-    buffer_ft m_leftout, m_rightout, m_downout, m_upout, m_frontout, m_backout; 
-    buffer_ft m_leftup, m_rightup, m_leftdown, m_rightdown, m_frontup, m_backup, m_frontdown, m_backdown, m_frontleft, m_backleft, m_frontright, m_backright;
-    buffer_ft m_leftupout, m_rightupout, m_leftdownout, m_rightdownout, m_frontupout, m_backupout, m_frontdownout, m_backdownout, m_frontleftout, m_backleftout, m_frontrightout, m_backrightout;
-    // 8 points
-    buffer_ft m_frontleftup, m_frontrightup, m_frontleftdown, m_frontrightdown, m_backleftup, m_backleftdown, m_backrightup, m_backrightdown;
-    buffer_ft m_frontleftupout, m_frontrightupout, m_frontleftdownout, m_frontrightdownout, m_backleftupout, m_backleftdownout, m_backrightupout, m_backrightdownout;
+    buffer_u phi, ua, va, wa, rho, p, pp;
+    buffer_div divphix, divphiy, divphiz, div, tau, nu;
 
-    buffer_t u_left, u_right, u_down, u_up, u_front, u_back;
-    buffer_t u_leftout, u_rightout, u_downout, u_upout, u_frontout, u_backout;
-
-    buffer_t u_leftup, u_rightup, u_leftdown, u_rightdown, u_backleft, u_backright, u_frontleft, u_frontright, u_backdown, u_backup, u_frontdown, u_frontup;
-    buffer_t u_leftupout, u_rightupout, u_leftdownout, u_rightdownout, u_backleftout, u_backrightout, u_frontleftout, u_frontrightout, u_backdownout, u_backupout, u_frontdownout, u_frontupout;
-
-    buffer_t u_frontleftdown, u_frontrightdown, u_frontleftup, u_frontrightup, u_backleftdown, u_backrightdown, u_backleftup, u_backrightup;
-    buffer_t u_frontleftdownout, u_frontrightdownout, u_frontleftupout, u_frontrightupout, u_backleftdownout, u_backrightdownout, u_backleftupout, u_backrightupout;
-    
-    // particle distribution eqution
-    Kokkos::View<double ****, Kokkos::CudaUVMSpace> f, ft, fb, g, gt, gb;
-    // macro scopic equation
-    Kokkos::View<double ***, Kokkos::CudaUVMSpace> ua, va, wa, rho, p, pp,tau,nu;
-    // usr define
     Kokkos::View<int ***, Kokkos::CudaUVMSpace> usr, ran;
-    // bounce back notation
-    Kokkos::View<int *, Kokkos::CudaUVMSpace> bb;
-    // weight function
-    Kokkos::View<double *, Kokkos::CudaUVMSpace> t;
-    // discrete velocity
-    Kokkos::View<int **, Kokkos::CudaUVMSpace> e;
-    // phase field 
-    Kokkos::View<double ***, Kokkos::CudaUVMSpace> phi;
-    //derivative
-    Kokkos::View<double ****, Kokkos::CudaUVMSpace> dphi,drho,dp,dpp,du,dv,dw;
 
-    //divergence
-    Kokkos::View<double ***, Kokkos::CudaUVMSpace> divphix, divphiy, divphiz;
-    Kokkos::View<double ***, Kokkos::CudaUVMSpace> div;
+    Kokkos::View<int *, Kokkos::CudaUVMSpace> bb;
+
+    Kokkos::View<double *, Kokkos::CudaUVMSpace> t;
+
+    Kokkos::View<int **, Kokkos::CudaUVMSpace> e;
 
     LBM(MPI_Comm comm_, int sx, int sy, int sz, double &tau0, double &tau1, double &taum, double &rho0, double &rho1, double &r_x, double &r_y, double &rz,double &u0)
         : comm(comm_), glx(sx), gly(sy), glz(sz), tau0(tau0), tau1(tau1), taum(taum), rho0(rho0),rho1(rho1), r_x(r_x), r_y(r_y), r_z(r_z),u0(u0)
     {
         // local length
         l_l[0] = (comm.px - glx % comm.rx >= 0) ? glx / comm.rx : glx / comm.rx + 1;
-        l_l[1] = (comm.py - gly % comm.ry >= 0) ? gly / comm.ry : gly / comm.ry + 1;
-        l_l[2] = (comm.pz - glz % comm.rz >= 0) ? glz / comm.rz : glz / comm.rz + 1;
+        l_l[1] = gly;
+        l_l[2] = glz;
         // local length
         lx = l_l[0] + 2 * ghost;
         ly = l_l[1] + 2 * ghost;
@@ -251,15 +201,10 @@ struct LBM
 
         MPI_Barrier(MPI_COMM_WORLD);
 
-
     };
 
     void Initialize();
     void Collision();
-    void setup_subdomain();
-    void pack(Kokkos::View<double ****,Kokkos::CudaUVMSpace> ff);
-    void exchange();
-    void unpack(Kokkos::View<double ****,Kokkos::CudaUVMSpace> ff);
     void Streaming();
     void Boundary();
     void Update();
@@ -267,15 +212,20 @@ struct LBM
     void Output(int n);
 
     void setup_u();
-    void pack_u(Kokkos::View<double ***,Kokkos::CudaUVMSpace> c);
-    void unpack_u(Kokkos::View<double ***,Kokkos::CudaUVMSpace> c);
+    void pack_u(buffer_u c);
+    void unpack_u(buffer_u c);
+
+    void setup_f();
+    void pack(buffer_f ff);
+    void unpack(buffer_f ff);
+
     void exchange_u();
-    void pass(Kokkos::View<double ***,Kokkos::CudaUVMSpace> c);
-    void passf(Kokkos::View<double ****,Kokkos::CudaUVMSpace> ff);
+    void exchange();
 
+    void passf(buffer_f ff);
+    void pass(buffer_u c);
 
-    Kokkos::View<double****,Kokkos::CudaUVMSpace> d_c(Kokkos::View<double***,Kokkos::CudaUVMSpace> c);
-        
-    Kokkos::View<double***,Kokkos::CudaUVMSpace> div_c(Kokkos::View<double***,Kokkos::CudaUVMSpace> cx,Kokkos::View<double***,Kokkos::CudaUVMSpace> cy,Kokkos::View<double***,Kokkos::CudaUVMSpace> cz);
+    buffer_f d_c(buffer_u c);
+    buffer_div div_c(buffer_div cx,buffer_div cy,buffer_div cz);
 };
 #endif
