@@ -212,9 +212,9 @@ void LBM::pack_f(buffer_f ff)
 
     Kokkos::deep_copy(m_rightout, Kokkos::subview(ff, Kokkos::ALL, std::make_pair(l_e[0]-1, l_e[0]), Kokkos::ALL));
 
-    Kokkos::deep_copy(m_downout, Kokkos::subview(ff, Kokkos::ALL, Kokkos::ALL, std::make_pair(l_s[0], 1+ l_s[0])));
+    Kokkos::deep_copy(m_downout, Kokkos::subview(ff, Kokkos::ALL, Kokkos::ALL, std::make_pair(l_s[1], 1+ l_s[1])));
 
-    Kokkos::deep_copy(m_upout, Kokkos::subview(ff, Kokkos::ALL, Kokkos::ALL, std::make_pair(l_e[0]-1, l_e[0])));
+    Kokkos::deep_copy(m_upout, Kokkos::subview(ff, Kokkos::ALL, Kokkos::ALL, std::make_pair(l_e[1]-1, l_e[1])));
 
 
     Kokkos::deep_copy(m_leftupout, Kokkos::subview(ff, Kokkos::ALL, std::make_pair(l_s[0], 1+ l_s[0]), std::make_pair(l_e[1]-1, l_e[1])));
@@ -363,9 +363,9 @@ void LBM::pack_u(buffer_u u)
 
     Kokkos::deep_copy(u_rightout, Kokkos::subview(u, std::make_pair(l_e[0]-1, l_e[0]), Kokkos::ALL));
 
-    Kokkos::deep_copy(u_downout, Kokkos::subview(u, Kokkos::ALL, std::make_pair(l_s[0], 1+ l_s[0])));
+    Kokkos::deep_copy(u_downout, Kokkos::subview(u, Kokkos::ALL, std::make_pair(l_s[1], 1+ l_s[1])));
 
-    Kokkos::deep_copy(u_upout, Kokkos::subview(u, Kokkos::ALL, std::make_pair(l_e[0]-1, l_e[0])));
+    Kokkos::deep_copy(u_upout, Kokkos::subview(u, Kokkos::ALL, std::make_pair(l_e[1]-1, l_e[1])));
 
 
     Kokkos::deep_copy(u_leftupout, Kokkos::subview(u,  std::make_pair(l_s[0], 1+ l_s[0]), std::make_pair(l_e[1]-1, l_e[1])));
